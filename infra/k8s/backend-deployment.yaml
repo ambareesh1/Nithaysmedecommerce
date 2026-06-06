@@ -1,0 +1,28 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: backend
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: backend
+  template:
+    metadata:
+      labels:
+        app: backend
+    spec:
+      containers:
+        - name: backend
+          image: medcart-backend:latest
+          ports:
+            - containerPort: 8080
+          env:
+            - name: PORT
+              value: "8080"
+            - name: DATABASE_URL
+              value: "postgres://medcart:medcart@postgres:5432/medcart?sslmode=disable"
+            - name: REDIS_ADDR
+              value: "redis:6379"
+            - name: JWT_SECRET
+              value: "medcart_secret_key"
