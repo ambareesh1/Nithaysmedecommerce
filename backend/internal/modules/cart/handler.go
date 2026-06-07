@@ -1,23 +1,24 @@
 package cart
 
 import (
-	"database/sql"
+	"context"
 	"net/http"
 	"strconv"
 
 	"github.com/gin-gonic/gin"
+	"go.mongodb.org/mongo-driver/bson"
+	"go.mongodb.org/mongo-driver/mongo"
 )
 
 type Handler struct {
-	DB *sql.DB
+	DB *mongo.Database
 }
 
-func NewHandler(db *sql.DB) *Handler {
+func NewHandler(db *mongo.Database) *Handler {
 	return &Handler{DB: db}
 }
 
 type CartItem struct {
-	ID        int     `json:"id"`
 	ProductID int     `json:"productId"`
 	Name      string  `json:"name"`
 	Price     float64 `json:"price"`
@@ -35,25 +36,36 @@ type UpdateRequest struct {
 
 func (h *Handler) GetCart(c *gin.Context) {
 	userID := c.GetInt("userID")
-	rows, err := h.DB.Query(
-		`SELECT c.id, c.product_id, p.name, p.price, c.quantity
-		 FROM carts c JOIN products p ON c.product_id = p.id
-		 WHERE c.user_id = $1 ORDER BY c.id`, userID,
-	)
+
+	cursor, err := h.DB.Collection("carts").Find(context.Background(), bson.M{"user_id": userID})
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "could not fetch cart"})
 		return
 	}
-	defer rows.Close()
+	defer cursor.Close(context.Background())
 
 	items := []CartItem{}
-	for rows.Next() {
-		var item CartItem
-		if err := rows.Scan(&item.ID, &item.ProductID, &item.Name, &item.Price, &item.Quantity); err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "could not read cart"})
-			return
+	for cursor.Next(context.Background()) {
+		var doc struct {
+			ProductID int `bson:"product_id"`
+			Quantity  int `bson:"quantity"`
 		}
-		items = append(items, item)
+		if err := cursor.Decode(&doc); err != nil {
+			continue
+		}
+
+		var product struct {
+			Name  string  `bson:"name"`
+			Price float64 `bson:"price"`
+		}
+		h.DB.Collection("products").FindOne(context.Background(), bson.M{"id": doc.ProductID}).Decode(&product)
+
+		items = append(items, CartItem{
+			ProductID: doc.ProductID,
+			Name:      product.Name,
+			Price:     product.Price,
+			Quantity:  doc.Quantity,
+		})
 	}
 
 	c.JSON(http.StatusOK, gin.H{"items": items})
@@ -70,10 +82,11 @@ func (h *Handler) AddToCart(c *gin.Context) {
 		req.Quantity = 1
 	}
 
-	_, err := h.DB.Exec(
-		"INSERT INTO carts (user_id, product_id, quantity) VALUES ($1, $2, $3)",
-		userID, req.ProductID, req.Quantity,
-	)
+	_, err := h.DB.Collection("carts").InsertOne(context.Background(), bson.M{
+		"user_id":    userID,
+		"product_id": req.ProductID,
+		"quantity":   req.Quantity,
+	})
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "could not add to cart"})
 		return
@@ -96,9 +109,10 @@ func (h *Handler) UpdateItem(c *gin.Context) {
 		return
 	}
 
-	_, err = h.DB.Exec(
-		"UPDATE carts SET quantity = $1 WHERE user_id = $2 AND product_id = $3",
-		req.Quantity, userID, productID,
+	_, err = h.DB.Collection("carts").UpdateOne(
+		context.Background(),
+		bson.M{"user_id": userID, "product_id": productID},
+		bson.M{"$set": bson.M{"quantity": req.Quantity}},
 	)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "could not update cart"})
@@ -116,9 +130,9 @@ func (h *Handler) RemoveItem(c *gin.Context) {
 		return
 	}
 
-	_, err = h.DB.Exec(
-		"DELETE FROM carts WHERE user_id = $1 AND product_id = $2",
-		userID, productID,
+	_, err = h.DB.Collection("carts").DeleteOne(
+		context.Background(),
+		bson.M{"user_id": userID, "product_id": productID},
 	)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "could not remove item"})

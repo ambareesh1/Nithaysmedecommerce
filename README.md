@@ -4,11 +4,11 @@
 
 MedCart SaaS is a medical product ordering platform built for hospitals, clinics, and diagnostic centers. Users can browse medical products, search and filter them, add products to a cart, place orders, and view their order history. An admin dashboard lets an administrator add, view, and delete products.
 
-The project is a full stack application with a **Next.js (React + TypeScript)** frontend and a **GoLang (Gin)** backend, using **PostgreSQL** for storage and **Redis** for caching. It is fully containerized with **Docker**, has **Kubernetes** manifests, and a **GitHub Actions** CI pipeline.
+The project is a full stack application with a **Next.js (React + TypeScript)** frontend and a **GoLang (Gin)** backend, using **MongoDB** for storage and **Redis** for caching. It is fully containerized with **Docker**, has **Kubernetes** manifests, and a **GitHub Actions** CI pipeline.
 
 ## Why This Project Was Built
 
-This project was built to demonstrate the practical full stack skills required for a Full Stack Developer role. It maps directly to a job description that asks for GoLang, React, Next.js, REST APIs, SQL, Redis, Docker, Kubernetes, CI/CD, testing, and eCommerce/SaaS understanding. It is intentionally kept beginner-friendly and clean so it is easy to read, run, and explain in an interview.
+This project was built to demonstrate the practical full stack skills required for a Full Stack Developer role. It maps directly to a job description that asks for GoLang, React, Next.js, REST APIs, a database, Redis, Docker, Kubernetes, CI/CD, testing, and eCommerce/SaaS understanding. It uses MongoDB as the database. It is intentionally kept beginner-friendly and clean so it is easy to read, run, and explain in an interview.
 
 ## Job Description Skill Mapping
 
@@ -18,7 +18,7 @@ This project was built to demonstrate the practical full stack skills required f
 | ReactJS | Frontend components and pages |
 | NextJS | App Router based frontend |
 | REST APIs | Auth, products, cart, and orders endpoints |
-| SQL database | PostgreSQL tables and queries |
+| Database | MongoDB collections and queries |
 | Redis caching | Product list caching |
 | Docker | Dockerfiles for frontend and backend |
 | Docker Compose | Runs the whole stack together |
@@ -55,7 +55,7 @@ This project was built to demonstrate the practical full stack skills required f
 **Backend**
 - GoLang
 - Gin framework
-- PostgreSQL
+- MongoDB
 - Redis
 - JWT authentication
 - REST APIs
@@ -78,10 +78,10 @@ Next.js Frontend  (localStorage for cart/orders demo)
 GoLang Gin Backend
    |          |
    v          v
-PostgreSQL   Redis (product cache)
+MongoDB      Redis (product cache)
 ```
 
-The frontend talks to the backend over REST APIs. The backend reads and writes data in PostgreSQL and uses Redis to cache the product list so repeated reads are faster. In the current beginner version, the frontend cart and orders use localStorage so the UI works without login, while the backend already exposes the full API for later integration.
+The frontend talks to the backend over REST APIs. The backend reads and writes data in MongoDB and uses Redis to cache the product list so repeated reads are faster. In the current beginner version, the frontend cart and orders use localStorage so the UI works without login, while the backend already exposes the full API for later integration.
 
 ## Folder Structure
 
@@ -94,6 +94,8 @@ medcart-saas/
     internal/
       config/
       database/
+        database.go
+        init-mongo.js
       cache/
       middleware/
       modules/
@@ -162,7 +164,7 @@ http://localhost:3000
 
 ## Backend Setup
 
-Make sure PostgreSQL and Redis are running locally (or use Docker Compose). Then:
+Make sure MongoDB and Redis are running locally (or use Docker Compose). Then:
 
 ```
 cd backend
@@ -179,19 +181,22 @@ http://localhost:8080/health
 The backend reads configuration from environment variables with sensible defaults:
 
 - `PORT` (default `8080`)
-- `DATABASE_URL` (default `postgres://medcart:medcart@localhost:5432/medcart?sslmode=disable`)
+- `MONGO_URI` (default `mongodb://localhost:27017`)
+- `MONGO_DB` (default `medcart`)
 - `REDIS_ADDR` (default `localhost:6379`)
 - `JWT_SECRET` (default `medcart_secret_key`)
 
-To create the database tables, run the SQL file:
+MongoDB does not need a fixed schema. To load the sample products and the id counters, run the init script:
 
 ```
-backend/internal/database/schema.sql
+mongosh < backend/internal/database/init-mongo.js
 ```
+
+When using Docker Compose this script runs automatically on first start.
 
 ## Docker Setup
 
-The easiest way to run everything (frontend, backend, PostgreSQL, Redis) is Docker Compose:
+The easiest way to run everything (frontend, backend, MongoDB, Redis) is Docker Compose:
 
 ```
 cd infra
@@ -202,10 +207,10 @@ Services and ports:
 
 - Frontend: `http://localhost:3000`
 - Backend: `http://localhost:8080`
-- PostgreSQL: `localhost:5432`
+- MongoDB: `localhost:27017`
 - Redis: `localhost:6379`
 
-The PostgreSQL container automatically loads `schema.sql` on first start.
+The MongoDB container automatically loads `init-mongo.js` on first start, which seeds the sample products and the id counters.
 
 ## Kubernetes Setup
 
@@ -215,9 +220,11 @@ Basic manifests are in `infra/k8s`. After building and loading the images into y
 kubectl apply -f infra/k8s/
 ```
 
-This creates deployments and services for the frontend, backend, PostgreSQL, and Redis.
+This creates deployments and services for the frontend, backend, MongoDB, and Redis.
 
-## Database Schema
+## Database Collections
+
+MongoDB is schema-less, so there are no fixed tables. The backend uses the following collections. Integer `id` fields are used (instead of MongoDB ObjectIDs) so the ids stay simple and match the frontend sample data.
 
 **users**
 - id, name, email, password_hash, role, created_at
@@ -226,15 +233,17 @@ This creates deployments and services for the frontend, backend, PostgreSQL, and
 - id, name, description, category, price, stock, image_url, created_at
 
 **carts**
-- id, user_id, product_id, quantity, created_at
+- user_id, product_id, quantity
 
 **orders**
-- id, user_id, order_number, total_amount, total_quantity, status, created_at
+- id, user_id, order_number, total_amount, total_quantity, status, created_at, items
 
-**order_items**
-- id, order_id, product_id, quantity, price, subtotal
+In MongoDB the order items are embedded directly inside each order document as an `items` array, where each item has product_id, name, quantity, price, and subtotal. This is the idiomatic NoSQL way and avoids a separate join.
 
-The full schema is in `backend/internal/database/schema.sql` and includes sample product data.
+**counters**
+- _id (collection name), seq
+
+The `counters` collection gives each new document a simple auto-incrementing integer id (a common MongoDB pattern). The sample products and counters are seeded by `backend/internal/database/init-mongo.js`.
 
 ## API Documentation
 
@@ -341,7 +350,7 @@ Protected routes need an `Authorization: Bearer <token>` header.
 4. The cart is cleared.
 5. The user is redirected to `/orders` to see the new order.
 
-In the backend version, `POST /api/orders` does the same logic against PostgreSQL: it reads product prices, calculates totals, stores the order and order items, and clears the user cart.
+In the backend version, `POST /api/orders` does the same logic against MongoDB: it reads product prices, calculates totals, stores the order with its embedded items, and clears the user cart.
 
 ## Redis Caching Explanation
 
@@ -349,7 +358,7 @@ The product list endpoint (`GET /api/products`) uses Redis to speed up reads:
 
 1. When a request comes in, the backend first checks Redis for the key `products_list`.
 2. If the cache has the products, it returns them directly (marked as `"source": "cache"`).
-3. If the cache is empty, it fetches products from PostgreSQL, stores them in Redis with a 5 minute expiry, and returns them (marked as `"source": "database"`).
+3. If the cache is empty, it fetches products from MongoDB, stores them in Redis with a 5 minute expiry, and returns them (marked as `"source": "database"`).
 4. Whenever a product is created, updated, or deleted, the cache is cleared so the next read rebuilds it with fresh data.
 
 This is a simple but realistic caching pattern used in real eCommerce systems to reduce database load.
@@ -386,8 +395,8 @@ When explaining this project in an interview, you can describe it like this:
 - **What it is**: MedCart SaaS is a medical eCommerce platform where clinics and hospitals order medical products. It has a customer side (browse, cart, orders) and an admin side (manage products).
 - **Frontend**: Built with Next.js App Router and TypeScript. I used reusable components (Header, ProductCard, FormInput, AppButton) and Tailwind CSS for styling. Cart and orders use localStorage so the UI is fully working without a backend, which keeps it easy to demo.
 - **Backend**: Built with Go and the Gin framework. It exposes clean REST APIs grouped into modules (auth, product, cart, order). I used JWT for authentication and middleware to protect cart and order routes.
-- **Database**: PostgreSQL with five tables (users, products, carts, orders, order_items). The schema models a real ordering system with order items and subtotals.
-- **Caching**: Redis caches the product list. Reads check Redis first, fall back to PostgreSQL, then refill the cache, and writes clear the cache. This shows I understand cache invalidation.
+- **Database**: MongoDB with collections for users, products, carts, and orders. Order items are embedded inside each order document, which is the idiomatic NoSQL approach, and I use a counters collection for simple integer ids.
+- **Caching**: Redis caches the product list. Reads check Redis first, fall back to MongoDB, then refill the cache, and writes clear the cache. This shows I understand cache invalidation.
 - **DevOps**: I containerized both apps with Docker, wired them together with Docker Compose, wrote Kubernetes manifests, and set up a GitHub Actions CI pipeline that builds the frontend and runs Go tests.
 - **Why it matters**: It maps one to one with the job description and shows I can work across the full stack, from UI to API to database to deployment.
 
@@ -398,6 +407,6 @@ When explaining this project in an interview, you can describe it like this:
 - Add product images and image upload
 - Add pagination and sorting to the product list
 - Add frontend tests with React Testing Library
-- Add database migrations instead of a single schema file
+- Add MongoDB indexes and validation rules for better performance and data safety
 - Add payment integration
 - Add proper Kubernetes ingress and secrets management

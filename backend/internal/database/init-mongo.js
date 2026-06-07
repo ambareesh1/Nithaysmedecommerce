@@ -1,0 +1,71 @@
+db = db.getSiblingDB("medcart");
+
+db.products.insertMany([
+  {
+    id: 1,
+    name: "Digital Thermometer",
+    description: "A digital thermometer used to measure body temperature.",
+    category: "Diagnostics",
+    price: 499,
+    stock: 25,
+    image_url: "https://example.com/thermometer.png",
+    created_at: new Date(),
+  },
+  {
+    id: 2,
+    name: "Surgical Gloves",
+    description: "Disposable latex surgical gloves for medical use.",
+    category: "Protection",
+    price: 299,
+    stock: 100,
+    image_url: "https://example.com/gloves.png",
+    created_at: new Date(),
+  },
+  {
+    id: 3,
+    name: "Blood Pressure Monitor",
+    description: "Automatic blood pressure monitor for home use.",
+    category: "Diagnostics",
+    price: 1999,
+    stock: 15,
+    image_url: "https://example.com/bp.png",
+    created_at: new Date(),
+  },
+  {
+    id: 4,
+    name: "Pulse Oximeter",
+    description: "Fingertip pulse oximeter to measure oxygen levels.",
+    category: "Diagnostics",
+    price: 899,
+    stock: 40,
+    image_url: "https://example.com/oximeter.png",
+    created_at: new Date(),
+  },
+  {
+    id: 5,
+    name: "Nebulizer Machine",
+    description: "Compact nebulizer machine for respiratory care.",
+    category: "Equipment",
+    price: 2499,
+    stock: 10,
+    image_url: "https://example.com/nebulizer.png",
+    created_at: new Date(),
+  },
+  {
+    id: 6,
+    name: "First Aid Kit",
+    description: "Complete first aid kit for emergency care.",
+    category: "Supplies",
+    price: 799,
+    stock: 50,
+    image_url: "https://example.com/firstaid.png",
+    created_at: new Date(),
+  },
+]);
+
+db.counters.insertMany([
+  { _id: "products", seq: 6 },
+  { _id: "users", seq: 0 },
+  { _id: "orders", seq: 0 },
+  { _id: "carts", seq: 0 },
+]);

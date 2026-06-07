@@ -1,37 +1,40 @@
 package product
 
 import (
-	"database/sql"
+	"context"
 	"encoding/json"
 	"net/http"
 	"strconv"
 	"time"
 
 	"medcart-backend/internal/cache"
+	"medcart-backend/internal/database"
 
 	"github.com/gin-gonic/gin"
 	"github.com/redis/go-redis/v9"
+	"go.mongodb.org/mongo-driver/bson"
+	"go.mongodb.org/mongo-driver/mongo"
 )
 
 const cacheKey = "products_list"
 
 type Handler struct {
-	DB    *sql.DB
+	DB    *mongo.Database
 	Redis *redis.Client
 }
 
-func NewHandler(db *sql.DB, rdb *redis.Client) *Handler {
+func NewHandler(db *mongo.Database, rdb *redis.Client) *Handler {
 	return &Handler{DB: db, Redis: rdb}
 }
 
 type Product struct {
-	ID          int     `json:"id"`
-	Name        string  `json:"name"`
-	Description string  `json:"description"`
-	Category    string  `json:"category"`
-	Price       float64 `json:"price"`
-	Stock       int     `json:"stock"`
-	ImageURL    string  `json:"imageUrl"`
+	ID          int     `bson:"id" json:"id"`
+	Name        string  `bson:"name" json:"name"`
+	Description string  `bson:"description" json:"description"`
+	Category    string  `bson:"category" json:"category"`
+	Price       float64 `bson:"price" json:"price"`
+	Stock       int     `bson:"stock" json:"stock"`
+	ImageURL    string  `bson:"image_url" json:"imageUrl"`
 }
 
 type ProductRequest struct {
@@ -61,24 +64,17 @@ func (h *Handler) GetAll(c *gin.Context) {
 		}
 	}
 
-	rows, err := h.DB.Query("SELECT id, name, description, category, price, stock, image_url FROM products ORDER BY id")
+	cursor, err := h.DB.Collection("products").Find(context.Background(), bson.M{})
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "could not fetch products"})
 		return
 	}
-	defer rows.Close()
+	defer cursor.Close(context.Background())
 
 	products := []Product{}
-	for rows.Next() {
-		var p Product
-		var description, imageURL sql.NullString
-		if err := rows.Scan(&p.ID, &p.Name, &description, &p.Category, &p.Price, &p.Stock, &imageURL); err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "could not read products"})
-			return
-		}
-		p.Description = description.String
-		p.ImageURL = imageURL.String
-		products = append(products, p)
+	if err := cursor.All(context.Background(), &products); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "could not read products"})
+		return
 	}
 
 	if h.Redis != nil {
@@ -99,16 +95,11 @@ func (h *Handler) GetByID(c *gin.Context) {
 	}
 
 	var p Product
-	var description, imageURL sql.NullString
-	err = h.DB.QueryRow(
-		"SELECT id, name, description, category, price, stock, image_url FROM products WHERE id = $1", id,
-	).Scan(&p.ID, &p.Name, &description, &p.Category, &p.Price, &p.Stock, &imageURL)
+	err = h.DB.Collection("products").FindOne(context.Background(), bson.M{"id": id}).Decode(&p)
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "product not found"})
 		return
 	}
-	p.Description = description.String
-	p.ImageURL = imageURL.String
 
 	c.JSON(http.StatusOK, gin.H{"product": p})
 }
@@ -124,11 +115,22 @@ func (h *Handler) Create(c *gin.Context) {
 		return
 	}
 
-	var id int
-	err := h.DB.QueryRow(
-		"INSERT INTO products (name, description, category, price, stock, image_url) VALUES ($1, $2, $3, $4, $5, $6) RETURNING id",
-		req.Name, req.Description, req.Category, req.Price, req.Stock, req.ImageURL,
-	).Scan(&id)
+	id, err := database.NextID(h.DB, "products")
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "could not create product id"})
+		return
+	}
+
+	product := Product{
+		ID:          id,
+		Name:        req.Name,
+		Description: req.Description,
+		Category:    req.Category,
+		Price:       req.Price,
+		Stock:       req.Stock,
+		ImageURL:    req.ImageURL,
+	}
+	_, err = h.DB.Collection("products").InsertOne(context.Background(), product)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "could not create product"})
 		return
@@ -151,16 +153,20 @@ func (h *Handler) Update(c *gin.Context) {
 		return
 	}
 
-	result, err := h.DB.Exec(
-		"UPDATE products SET name = $1, description = $2, category = $3, price = $4, stock = $5, image_url = $6 WHERE id = $7",
-		req.Name, req.Description, req.Category, req.Price, req.Stock, req.ImageURL, id,
-	)
+	update := bson.M{"$set": bson.M{
+		"name":        req.Name,
+		"description": req.Description,
+		"category":    req.Category,
+		"price":       req.Price,
+		"stock":       req.Stock,
+		"image_url":   req.ImageURL,
+	}}
+	result, err := h.DB.Collection("products").UpdateOne(context.Background(), bson.M{"id": id}, update)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "could not update product"})
 		return
 	}
-	count, _ := result.RowsAffected()
-	if count == 0 {
+	if result.MatchedCount == 0 {
 		c.JSON(http.StatusNotFound, gin.H{"error": "product not found"})
 		return
 	}
@@ -176,13 +182,12 @@ func (h *Handler) Delete(c *gin.Context) {
 		return
 	}
 
-	result, err := h.DB.Exec("DELETE FROM products WHERE id = $1", id)
+	result, err := h.DB.Collection("products").DeleteOne(context.Background(), bson.M{"id": id})
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "could not delete product"})
 		return
 	}
-	count, _ := result.RowsAffected()
-	if count == 0 {
+	if result.DeletedCount == 0 {
 		c.JSON(http.StatusNotFound, gin.H{"error": "product not found"})
 		return
 	}
