@@ -20,11 +20,10 @@ import (
 func main() {
 	cfg := config.Load()
 
-	db, err := database.Connect(cfg.DatabaseURL)
+	db, err := database.Connect(cfg.MongoURI, cfg.MongoDB)
 	if err != nil {
 		log.Fatal("database connection failed: ", err)
 	}
-	defer db.Close()
 
 	rdb := cache.Connect(cfg.RedisAddr)
 

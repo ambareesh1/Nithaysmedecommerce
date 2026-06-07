@@ -3,18 +3,20 @@ package config
 import "os"
 
 type Config struct {
-	Port        string
-	DatabaseURL string
-	RedisAddr   string
-	JWTSecret   string
+	Port      string
+	MongoURI  string
+	MongoDB   string
+	RedisAddr string
+	JWTSecret string
 }
 
 func Load() Config {
 	return Config{
-		Port:        getEnv("PORT", "8080"),
-		DatabaseURL: getEnv("DATABASE_URL", "postgres://medcart:medcart@localhost:5432/medcart?sslmode=disable"),
-		RedisAddr:   getEnv("REDIS_ADDR", "localhost:6379"),
-		JWTSecret:   getEnv("JWT_SECRET", "medcart_secret_key"),
+		Port:      getEnv("PORT", "8080"),
+		MongoURI:  getEnv("MONGO_URI", "mongodb://localhost:27017"),
+		MongoDB:   getEnv("MONGO_DB", "medcart"),
+		RedisAddr: getEnv("REDIS_ADDR", "localhost:6379"),
+		JWTSecret: getEnv("JWT_SECRET", "medcart_secret_key"),
 	}
 }
 

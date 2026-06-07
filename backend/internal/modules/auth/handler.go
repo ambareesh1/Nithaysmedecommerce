@@ -1,20 +1,34 @@
 package auth
 
 import (
-	"database/sql"
+	"context"
 	"net/http"
+	"time"
+
+	"medcart-backend/internal/database"
 
 	"github.com/gin-gonic/gin"
+	"go.mongodb.org/mongo-driver/bson"
+	"go.mongodb.org/mongo-driver/mongo"
 	"golang.org/x/crypto/bcrypt"
 )
 
 type Handler struct {
-	DB     *sql.DB
+	DB     *mongo.Database
 	Secret string
 }
 
-func NewHandler(db *sql.DB, secret string) *Handler {
+func NewHandler(db *mongo.Database, secret string) *Handler {
 	return &Handler{DB: db, Secret: secret}
+}
+
+type User struct {
+	ID           int       `bson:"id"`
+	Name         string    `bson:"name"`
+	Email        string    `bson:"email"`
+	PasswordHash string    `bson:"password_hash"`
+	Role         string    `bson:"role"`
+	CreatedAt    time.Time `bson:"created_at"`
 }
 
 type RegisterRequest struct {
@@ -39,19 +53,36 @@ func (h *Handler) Register(c *gin.Context) {
 		return
 	}
 
+	users := h.DB.Collection("users")
+	count, _ := users.CountDocuments(context.Background(), bson.M{"email": req.Email})
+	if count > 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "email already exists"})
+		return
+	}
+
 	hash, err := bcrypt.GenerateFromPassword([]byte(req.Password), bcrypt.DefaultCost)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "could not hash password"})
 		return
 	}
 
-	var userID int
-	err = h.DB.QueryRow(
-		"INSERT INTO users (name, email, password_hash, role) VALUES ($1, $2, $3, $4) RETURNING id",
-		req.Name, req.Email, string(hash), "user",
-	).Scan(&userID)
+	userID, err := database.NextID(h.DB, "users")
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "email already exists"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "could not create user id"})
+		return
+	}
+
+	user := User{
+		ID:           userID,
+		Name:         req.Name,
+		Email:        req.Email,
+		PasswordHash: string(hash),
+		Role:         "user",
+		CreatedAt:    time.Now(),
+	}
+	_, err = users.InsertOne(context.Background(), user)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "could not create user"})
 		return
 	}
 
@@ -79,23 +110,19 @@ func (h *Handler) Login(c *gin.Context) {
 		return
 	}
 
-	var userID int
-	var name, passwordHash, role string
-	err := h.DB.QueryRow(
-		"SELECT id, name, password_hash, role FROM users WHERE email = $1",
-		req.Email,
-	).Scan(&userID, &name, &passwordHash, &role)
+	var user User
+	err := h.DB.Collection("users").FindOne(context.Background(), bson.M{"email": req.Email}).Decode(&user)
 	if err != nil {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid email or password"})
 		return
 	}
 
-	if bcrypt.CompareHashAndPassword([]byte(passwordHash), []byte(req.Password)) != nil {
+	if bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(req.Password)) != nil {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid email or password"})
 		return
 	}
 
-	token, err := GenerateToken(userID, role, h.Secret)
+	token, err := GenerateToken(user.ID, user.Role, h.Secret)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "could not create token"})
 		return
@@ -104,6 +131,6 @@ func (h *Handler) Login(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"message": "login successful",
 		"token":   token,
-		"user":    gin.H{"id": userID, "name": name, "email": req.Email, "role": role},
+		"user":    gin.H{"id": user.ID, "name": user.Name, "email": user.Email, "role": user.Role},
 	})
 }
